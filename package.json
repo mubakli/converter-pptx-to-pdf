@@ -1,0 +1,54 @@
+{
+  "name": "converter-pptx-to-pdf",
+  "version": "1.0.0",
+  "description": "Converts all PPTX/PPT files in the 'girdiler' folder to PDF and saves them in the 'ciktilar' folder using LibreOffice Headless.",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "pptx",
+    "pdf",
+    "converter",
+    "libreoffice"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.2.1",
+    "@tanstack/react-query": "^5.90.21",
+    "@trpc/client": "^11.10.0",
+    "@trpc/react-query": "^11.10.0",
+    "@trpc/server": "^11.10.0",
+    "adm-zip": "^0.5.16",
+    "autoprefixer": "^10.4.24",
+    "clsx": "^2.1.1",
+    "libreoffice-convert": "^1.6.0",
+    "next": "^16.1.6",
+    "postcss": "^8.5.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^4.2.1",
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^20.11.0",
+    "@types/react": "19.2.14",
+    "@types/supertest": "^6.0.3",
+    "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^5.1.4",
+    "@vitest/ui": "^3.2.4",
+    "supertest": "^7.2.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3",
+    "vite": "^7.3.1",
+    "vitest": "^3.2.4"
+  }
+}
