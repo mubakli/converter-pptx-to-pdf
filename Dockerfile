@@ -14,7 +14,7 @@ WORKDIR /app
 # Copy package descriptors 
 COPY package*.json ./
 
-# Install dependencies (ignoring scripts & strict overrides)
+# Install dependencies
 RUN npm install
 
 # Copy source code
@@ -23,7 +23,8 @@ COPY . .
 # Build Next.js
 RUN npm run build
 
-# Default Next.js port (can be overridden during docker run)
+# Crucial for Docker: Allow connections from outside the container
+ENV HOSTNAME="0.0.0.0"
 ENV PORT=8080
 EXPOSE 8080
 
