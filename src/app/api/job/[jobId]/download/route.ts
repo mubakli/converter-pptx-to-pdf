@@ -37,11 +37,14 @@ export async function GET(
       // Clean up after serving
       setImmediate(() => conversionQueue.cleanup(jobId));
 
+      // RFC 5987 encoding — supports Turkish / non-ASCII chars in filenames
+      const encodedPdfName = encodeURIComponent(fileName);
+
       return new NextResponse(new Uint8Array(pdfBuffer), {
         status: 200,
         headers: {
           "Content-Type": "application/pdf",
-          "Content-Disposition": `attachment; filename="${fileName}"`,
+          "Content-Disposition": `attachment; filename="converted.pdf"; filename*=UTF-8''${encodedPdfName}`,
         },
       });
     } else {
@@ -56,11 +59,14 @@ export async function GET(
       // Clean up after serving
       setImmediate(() => conversionQueue.cleanup(jobId));
 
+      // RFC 5987 encoding — ZIP filename is already ASCII-safe but encode anyway
+      const encodedZipName = encodeURIComponent(zipName);
+
       return new NextResponse(new Uint8Array(zipBuffer), {
         status: 200,
         headers: {
           "Content-Type": "application/zip",
-          "Content-Disposition": `attachment; filename="${zipName}"`,
+          "Content-Disposition": `attachment; filename="Sunum_Ciktilari.zip"; filename*=UTF-8''${encodedZipName}`,
         },
       });
     }
