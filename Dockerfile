@@ -23,8 +23,9 @@ COPY . .
 # Build Next.js
 RUN npm run build
 
-# Expose port
-EXPOSE 3000
+# Default Next.js port (can be overridden during docker run)
+ENV PORT=8080
+EXPOSE 8080
 
 # Start server
 CMD ["npm", "start"]
