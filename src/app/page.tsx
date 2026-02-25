@@ -18,6 +18,7 @@ interface QueueStats {
 
 const POLL_INTERVAL_MS = 2000;
 const QUEUE_POLL_INTERVAL_MS = 3000;
+const MAX_CONCURRENT_FILES = 20;
 
 /** Polls /api/queue-status every QUEUE_POLL_INTERVAL_MS and returns live stats */
 function useQueueStatus(): QueueStats | null {
@@ -49,7 +50,7 @@ function QueueStatusBanner({ stats }: { stats: QueueStats | null }) {
     return (
       <div className="flex items-center justify-center gap-2 text-xs text-slate-500 animate-pulse">
         <span className="w-1.5 h-1.5 rounded-full bg-slate-600" />
-        Sunucu durumu alınıyor...
+        Fetching server status...
       </div>
     );
   }
@@ -66,10 +67,10 @@ function QueueStatusBanner({ stats }: { stats: QueueStats | null }) {
     : "bg-cyan-400 animate-pulse";
 
   const label = isIdle
-    ? "Sunucu boşta — hemen dönüştürme başlar"
+    ? "Server idle — immediate conversion"
     : isBusy
-    ? `${stats.pending} iş bekliyor — sıra oluştu`
-    : `${stats.running} iş işleniyor`;
+    ? `${stats.pending} jobs waiting in queue`
+    : `${stats.running} jobs processing`;
 
   return (
     <div className="flex items-center justify-center gap-3 flex-wrap">
@@ -81,7 +82,7 @@ function QueueStatusBanner({ stats }: { stats: QueueStats | null }) {
 
       {/* Capacity mini-bar */}
       <div className="flex items-center gap-1.5">
-        <span className="text-[10px] text-slate-600 uppercase tracking-wider">Kapasite</span>
+        <span className="text-[10px] text-slate-600 uppercase tracking-wider">Capacity</span>
         <div className="w-20 h-1.5 bg-slate-800 rounded-full overflow-hidden">
           <div
             className={`h-full rounded-full transition-all duration-700 ${
@@ -98,7 +99,7 @@ function QueueStatusBanner({ stats }: { stats: QueueStats | null }) {
       {/* Pending pill (only when there's a queue) */}
       {stats.pending > 0 && (
         <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 font-semibold">
-          {stats.pending} bekliyor
+          {stats.pending} pending
         </span>
       )}
     </div>
@@ -191,12 +192,12 @@ export default function Home() {
           } else if (data.status === "error") {
             stopPolling();
             setStatus("error");
-            setErrorMessage(data.message || "Dönüştürme başarısız.");
+            setErrorMessage(data.message || "Conversion failed.");
           }
         } catch {
           stopPolling();
           setStatus("error");
-          setErrorMessage("Bağlantı kesildi. Lütfen tekrar deneyin.");
+          setErrorMessage("Connection lost. Please try again.");
         }
       }, POLL_INTERVAL_MS);
     },
@@ -212,13 +213,34 @@ export default function Home() {
         f.name.toLowerCase().endsWith(".ppt") ||
         f.name.toLowerCase().endsWith(".pptx")
     );
+
+    let hasError = false;
+    let newErrorMsg = "";
+
     if (validFiles.length !== selectedFiles.length) {
-      alert("Sadece .ppt ve .pptx dosyaları seçebilirsiniz.");
+      hasError = true;
+      newErrorMsg = "Only .ppt and .pptx files are supported. Invalid files were ignored.";
     }
-    setFiles((prev) => [...prev, ...validFiles]);
-    setStatus("idle");
-    setErrorMessage("");
-    setProgress(0);
+
+    setFiles((prev) => {
+      const remainingQuota = MAX_CONCURRENT_FILES - prev.length;
+      if (validFiles.length > remainingQuota) {
+        hasError = true;
+        newErrorMsg = `Maximum limit is ${MAX_CONCURRENT_FILES} files per batch. Extra files were ignored.`;
+        return [...prev, ...validFiles.slice(0, Math.max(0, remainingQuota))];
+      }
+      return [...prev, ...validFiles];
+    });
+
+    if (hasError) {
+      setStatus("error");
+      setErrorMessage(newErrorMsg);
+      setProgress(0);
+    } else {
+      setStatus("idle");
+      setErrorMessage("");
+      setProgress(0);
+    }
   };
 
   const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -229,8 +251,14 @@ export default function Home() {
     }
   };
 
-  const removeFile = (idx: number) =>
+  const removeFile = (idx: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== idx));
+    // Reset status if we remove a file (e.g. to clear errors dynamically)
+    if (status === "error") {
+      setStatus("idle");
+      setErrorMessage("");
+    }
+  };
 
   // ------------------------------------------------------------------
   // Upload → enqueue → poll
@@ -250,7 +278,7 @@ export default function Home() {
     const defaultFileName =
       files.length === 1
         ? `${files[0].name.replace(/\.[^/.]+$/, "")}.pdf`
-        : "Sunum_Ciktilari.zip";
+        : "Converted_Presentations.zip";
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/convert");
@@ -270,7 +298,7 @@ export default function Home() {
         setProgress(40);
         pollJobStatus(xhr.response.jobId, defaultFileName);
       } else {
-        const msg = xhr.response?.error || "Yükleme başarısız.";
+        const msg = xhr.response?.error || "Upload failed.";
         setStatus("error");
         setErrorMessage(msg);
       }
@@ -278,7 +306,7 @@ export default function Home() {
 
     xhr.onerror = () => {
       setStatus("error");
-      setErrorMessage("Bağlantı koptu veya ağ hatası.");
+      setErrorMessage("Network error or connection lost.");
     };
 
     xhr.send(formData);
@@ -288,13 +316,13 @@ export default function Home() {
   // Status text helpers
   // ------------------------------------------------------------------
   const statusLabel = () => {
-    if (status === "uploading") return "Sunucuya Yükleniyor...";
+    if (status === "uploading") return "Uploading to Server...";
     if (status === "queued")
       return queuePosition
-        ? `Sırada #${queuePosition}. bekliyorsunuz...`
-        : "Sırada bekleniyor...";
-    if (status === "converting") return "Dönüştürülüyor (Lütfen sayfadan ayrılmayın)...";
-    if (status === "done") return "İşlem Tamamlandı!";
+        ? `You are #${queuePosition} in queue...`
+        : "Waiting in queue...";
+    if (status === "converting") return "Converting (Please do not leave the page)...";
+    if (status === "done") return "Conversion Complete!";
     return "";
   };
 
@@ -315,45 +343,54 @@ export default function Home() {
       <div className="flex-1 w-full max-w-4xl mx-auto flex flex-col h-full gap-6">
         {/* Header */}
         <header className="text-center shrink-0">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 mb-3">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 mb-3 hover:scale-105 transition-transform cursor-default">
             <svg className="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                 d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m3.75 9v6m3-3H9m1.5-12H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
             </svg>
           </div>
           <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-cyan-400 to-teal-400">
-            PPTX → PDF Web Aracı
+            PPTX → PDF Converter
           </h1>
         </header>
 
         {/* Live Queue Status Banner */}
-        <div className="shrink-0 px-2 py-1.5 rounded-2xl bg-slate-900/40 border border-slate-800/60 backdrop-blur-sm">
+        <div className="shrink-0 px-2 py-1.5 rounded-2xl bg-slate-900/40 border border-slate-800/60 backdrop-blur-sm shadow-xl">
           <QueueStatusBanner stats={queueStats} />
         </div>
 
         {/* Content */}
-        <div className="flex flex-col md:flex-row gap-6 flex-1 min-h-0 bg-slate-900/30 border border-slate-800/80 rounded-3xl p-4 md:p-6 backdrop-blur-xl shadow-2xl">
+        <div className="flex flex-col md:flex-row gap-6 flex-1 min-h-0 bg-slate-900/40 border border-slate-800/80 rounded-3xl p-4 md:p-6 backdrop-blur-xl shadow-2xl">
 
           {/* Left Panel — Drop Zone */}
           <div
             className={`flex-1 flex flex-col justify-center items-center rounded-2xl border-2 border-dashed transition-all duration-300 relative overflow-hidden group ${
               isDragging
                 ? "border-cyan-400 bg-cyan-900/20"
-                : "border-slate-700/60 hover:border-indigo-500/50 hover:bg-slate-800/30"
+                : "border-slate-700/60 hover:border-indigo-500/50 hover:bg-slate-800/50"
             }`}
             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
             onDrop={handleFileDrop}
           >
-            <div className="p-8 flex flex-col items-center justify-center text-center space-y-4">
+            <div className="p-8 flex flex-col items-center justify-center text-center space-y-5">
+              
+              {/* Limit Badge inside the drop zone for UX prominence */}
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-semibold uppercase tracking-widest shadow-lg">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Max Limit: 20 Files
+              </div>
+
               <div className="p-4 rounded-full bg-slate-800/80 group-hover:bg-indigo-500/20 transition-colors duration-300 shadow-md">
                 <svg className="w-10 h-10 text-slate-400 group-hover:text-indigo-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
               </div>
               <div>
-                <p className="text-xl font-medium text-slate-200">Dosyaları Sürükle ve Bırak</p>
-                <p className="text-sm text-slate-500 mt-2">veya sistemden seçin (Birden çok .pptx/.ppt)</p>
+                <p className="text-xl font-medium text-slate-200">Drag & Drop Files Here</p>
+                <p className="text-sm text-slate-500 mt-2">Only .pptx or .ppt formats allowed</p>
               </div>
               <input
                 type="file"
@@ -371,26 +408,29 @@ export default function Home() {
                 className="mt-4 px-6 py-2.5 rounded-xl bg-slate-800/80 border border-slate-600 hover:bg-slate-700 hover:border-slate-500 text-slate-100 font-medium transition-colors shadow-sm"
                 disabled={isProcessing}
               >
-                Göz At
+                Browse Files
               </button>
             </div>
           </div>
 
           {/* Right Panel — Queue & Controls */}
-          <div className="flex-1 flex flex-col rounded-2xl bg-slate-950/50 border border-slate-800/80 overflow-hidden">
+          <div className="flex-1 flex flex-col rounded-2xl bg-slate-950/50 border border-slate-800/80 overflow-hidden shadow-inner">
             <div className="p-4 border-b border-slate-800/80 flex justify-between items-center bg-slate-900/50 shrink-0">
               <h3 className="font-semibold text-slate-200 flex items-center gap-2">
                 <svg className="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
-                İşlem Kuyruğu ({files.length})
+                Conversion Queue
+                <span className={`text-xs ml-2 px-2 py-0.5 rounded-full ${files.length >= MAX_CONCURRENT_FILES ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" : "bg-slate-800 text-slate-400"}`}>
+                  {files.length} / {MAX_CONCURRENT_FILES}
+                </span>
               </h3>
               {!isProcessing && files.length > 0 && (
                 <button
-                  onClick={() => setFiles([])}
+                  onClick={() => { setFiles([]); setErrorMessage(""); setStatus("idle"); }}
                   className="text-xs font-medium text-slate-400 hover:text-red-400 transition-colors px-2 py-1 rounded-md hover:bg-red-500/10"
                 >
-                  Temizle
+                  Clear All
                 </button>
               )}
             </div>
@@ -399,13 +439,14 @@ export default function Home() {
             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
               {files.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-500 text-sm italic">
-                  Henüz dosya eklenmedi.
+                  No files added yet.
                 </div>
               ) : (
                 <ul className="space-y-2">
                   {files.map((file, i) => (
-                    <li key={i} className="flex justify-between items-center p-3 rounded-xl bg-slate-800/40 border border-slate-700/50 hover:border-indigo-500/30 transition-colors group">
-                      <div className="flex items-center gap-3 overflow-hidden">
+                    <li key={i} className="flex justify-between items-center p-3 rounded-xl bg-slate-800/40 border border-slate-700/50 hover:border-indigo-500/30 transition-colors group relative overflow-hidden">
+                      <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-indigo-500 to-cyan-400 opacity-50"></div>
+                      <div className="flex items-center gap-3 overflow-hidden ml-2">
                         <svg className="w-5 h-5 text-indigo-400 shrink-0" fill="currentColor" viewBox="0 0 24 24">
                           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z" />
                         </svg>
@@ -453,7 +494,7 @@ export default function Home() {
                   {/* Queue position badge */}
                   {status === "queued" && queuePosition && queuePosition > 1 && (
                     <p className="text-xs text-amber-400/80 text-center pt-1">
-                      ⏳ Sistemde {queuePosition - 1} iş önünüzde. Sıranızı bekliyorsunuz...
+                      ⏳ There are {queuePosition - 1} jobs ahead of you. Please wait...
                     </p>
                   )}
                 </div>
@@ -465,7 +506,7 @@ export default function Home() {
                   <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                   </svg>
-                  <p className="text-xs font-medium">{errorMessage}</p>
+                  <p className="text-xs font-medium leading-relaxed">{errorMessage}</p>
                 </div>
               )}
 
@@ -481,7 +522,7 @@ export default function Home() {
                 <div className="flex items-center justify-center gap-2 text-white">
                   {!isProcessing ? (
                     <>
-                      <span>{status === "done" ? "Yeni Dönüştürme Başlat" : "Dönüştür ve İndir"}</span>
+                      <span>{status === "done" ? "Start New Conversion" : "Convert & Download"}</span>
                       <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                       </svg>
@@ -492,7 +533,7 @@ export default function Home() {
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                       </svg>
-                      <span>İşleniyor {Math.round(progress)}%</span>
+                      <span>Processing {Math.round(progress)}%</span>
                     </>
                   )}
                 </div>
